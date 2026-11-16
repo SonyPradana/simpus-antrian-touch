@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The version lives in mygo.json, which names the installer. A tag that
+      # disagrees with it would publish files labelled with the wrong version.
+      - name: Tag matches mygo.json
+        shell: pwsh
+        run: |
+          $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            Write-Error "tag $env:GITHUB_REF_NAME does not match mygo.json version $version"
+            exit 1
+          }
+
+      - name: go test
+        run: go test -count=1 ./...
+
+      - name: mygo build
+        run: go tool mygo build
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
+          $assets = @(
+            'build/windows-amd64/simpus-antrian-interactive.exe',
+            "build/windows-amd64/simpus-antrian-interactive-setup-$version-amd64.exe"
+          )
+          foreach ($a in $assets) {
+            if (-not (Test-Path $a)) {
+              Write-Error "missing build output: $a"
+              exit 1
+            }
+          }
+          # gh ships with the runner; no third-party release action needed.
+          gh release create $env:GITHUB_REF_NAME @assets `
+            --title $env:GITHUB_REF_NAME --generate-notes

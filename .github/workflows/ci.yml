@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # MyGo draws native Win32 windows through purego, so vet and build only
+    # make sense on Windows.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        shell: pwsh
+        run: |
+          $dirty = gofmt -l .
+          if ($dirty) {
+            Write-Host 'These files need gofmt -w:'
+            $dirty | ForEach-Object { Write-Host "  $_" }
+            exit 1
+          }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: mygo vet
+        run: go tool mygo vet .
+
+      - name: mygo build
+        # Not just `go build`: this is the command that produces the shipped
+        # exe and installer, so a PR that breaks it should fail here.
+        run: go tool mygo build
+
+      - name: go test
+        # The four TestLive* tests skip themselves unless APM_LIVE=1, so no
+        # API key or server is needed here.
+        run: go test -count=1 ./...
