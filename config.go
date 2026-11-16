@@ -1,0 +1,106 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// utf8BOM is the byte order mark that Notepad and PowerShell add when writing
+// UTF-8. JSON does not allow it.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// Config is read from config.json next to the exe. Every value has a default
+// so the kiosk can still open even if the file is incomplete.
+type Config struct {
+	ServerURL  string `json:"server_url"`
+	APIKey     string `json:"api_key"`
+	PoscheckID string `json:"poscheck_id"`
+	PetugasID  string `json:"petugas_id"`
+	// Mock uses made-up data in memory, to develop screens without a server
+	// and without a database.
+	Mock bool `json:"mock"`
+	// Windowed uses a normal window that can be resized and closed. For
+	// development only; default false means full-screen kiosk.
+	Windowed bool `json:"windowed"`
+	// DryRun sends dry_run=true to the server: the queue number is computed,
+	// but no row is written to the database. Used when testing the kiosk
+	// against the production server. Default false = take a real number.
+	DryRun bool `json:"dry_run"`
+}
+
+const (
+	defaultServerURL = "http://localhost:8080"
+	configFileName   = "config.json"
+)
+
+// LoadConfig reads config.json. Search order: CONFIG_FILE, exe folder,
+// then the working folder (so `go run` and `go tool mygo dev` also work).
+func LoadConfig() (*Config, string, error) {
+	path := configPath()
+	cfg := &Config{}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		// Windows Notepad writes UTF-8 with a BOM, and json.Unmarshal
+		// rejects it. Staff will edit this file, so the BOM is dropped
+		// silently rather than the kiosk refusing to start over something
+		// they cannot see.
+		data = bytes.TrimPrefix(data, utf8BOM)
+		if err := json.Unmarshal(data, cfg); err != nil {
+			return nil, path, fmt.Errorf("config.json rusak: %w", err)
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// New kiosk: use defaults, do not fail just because the file is absent.
+	default:
+		return nil, path, err
+	}
+	cfg.normalize()
+	if err := cfg.validate(); err != nil {
+		return nil, path, err
+	}
+	return cfg, path, nil
+}
+
+func configPath() string {
+	if p := strings.TrimSpace(os.Getenv("CONFIG_FILE")); p != "" {
+		return p
+	}
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), configFileName)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return filepath.Join(wd, configFileName)
+	}
+	return configFileName
+}
+
+func (c *Config) normalize() {
+	c.ServerURL = strings.TrimRight(strings.TrimSpace(c.ServerURL), "/")
+	if c.ServerURL == "" {
+		c.ServerURL = defaultServerURL
+	}
+	c.APIKey = strings.TrimSpace(c.APIKey)
+	c.PoscheckID = strings.TrimSpace(c.PoscheckID)
+	c.PetugasID = strings.TrimSpace(c.PetugasID)
+}
+
+func (c *Config) validate() error {
+	if c.Mock {
+		return nil
+	}
+	if c.APIKey == "" {
+		return errors.New("api_key kosong: isi config.json atau set mock=true")
+	}
+	if c.PoscheckID == "" {
+		return errors.New("poscheck_id kosong: isi config.json")
+	}
+	return nil
+}
