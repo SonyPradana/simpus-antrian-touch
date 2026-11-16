@@ -1,0 +1,4 @@
+# Check out LF everywhere. Without this a Windows checkout with
+# core.autocrlf=true turns every file into CRLF, and gofmt then reports the
+# whole tree as unformatted.
+* text=auto eol=lf
