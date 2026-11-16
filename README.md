@@ -220,6 +220,26 @@ the number screen shows the **MODE UJI** warning. Set `"dry_run": false` only
 once the kiosk is at the registration desk and its numbers should be recorded
 in SIMPUS.
 
+## Releases and CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+`gofmt -l .`, `go vet ./...`, `go tool mygo vet .`, `go tool mygo build`, and
+`go test ./...`. Everything runs on `windows-latest` because MyGo draws Win32
+windows through purego; there is no portable build. The four `TestLive*` tests
+skip themselves without `APM_LIVE=1`, so CI needs no API key.
+
+`.github/workflows/release.yml` runs when a `v*` tag is pushed. It refuses to
+publish if the tag does not match `version` in `mygo.json`, then attaches the
+portable exe and the installer to the GitHub release:
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Bump `version` in `mygo.json` before tagging; the installer file name comes
+from that field.
+
 ## License
 
 MIT — see `LICENSE`. Copyright (c) 2026 SonyPradana.
