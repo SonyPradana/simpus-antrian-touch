@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -492,7 +493,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("konfigurasi: %v", err)
 	}
-	lg := NewLogger("log")
+	lg := NewLogger(filepath.Join(exeDir(), "log"))
 	defer lg.Close()
 	lg.Event("kiosk mulai config=%s mock=%t dry_run=%t server=%s", path, cfg.Mock, cfg.DryRun, cfg.ServerURL)
 

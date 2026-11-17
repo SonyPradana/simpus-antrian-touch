@@ -9,20 +9,67 @@ import (
 	"testing"
 )
 
-// A missing config.json is not an error: a new kiosk still has to open.
+// A missing config.json is not an error: a new kiosk still has to open. An
+// explicit CONFIG_FILE is different: it must exist, or the operator is sent
+// hunting in the wrong place.
 func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("CONFIG_FILE", filepath.Join(dir, "config.json"))
+	path := filepath.Join(dir, "config.json")
+	t.Setenv("CONFIG_FILE", path)
 
+	// CONFIG_FILE that points nowhere is reported as a path problem, not as
+	// an empty api_key.
+	_, _, err := LoadConfig()
+	if err == nil {
+		t.Fatal("a missing CONFIG_FILE must be reported")
+	}
+	if !strings.Contains(err.Error(), "CONFIG_FILE") || !strings.Contains(err.Error(), path) {
+		t.Errorf("error should name CONFIG_FILE and its path, got %q", err)
+	}
+
+	// Without CONFIG_FILE the file is optional: an existing kiosk that
+	// already has mock=true keeps opening.
+	t.Setenv("CONFIG_FILE", "")
+	t.Chdir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"mock": true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg, _, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("config.json in the working folder must be read: %v", err)
+	}
+	if cfg.ServerURL != defaultServerURL {
+		t.Errorf("server_url %q, want %q", cfg.ServerURL, defaultServerURL)
+	}
+
+	// No file and mock=false refuses to start, and says where it looked.
+	if err := os.Remove(filepath.Join(dir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = LoadConfig()
+	if err == nil {
+		t.Fatal("a missing config.json with mock=false must be reported")
+	}
+	if !strings.Contains(err.Error(), "tidak ditemukan") {
+		t.Errorf("error should name the missing file, got %q", err)
+	}
+
+	// Blank api_key with mock=false is still its own message.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"mock": false}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = LoadConfig()
 	if err == nil {
 		t.Fatal("config without api_key must be rejected when mock=false")
 	}
+	if !strings.Contains(err.Error(), "api_key") {
+		t.Errorf("error should name api_key, got %q", err)
+	}
 
-	path := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(path, []byte(`{"mock": true}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("CONFIG_FILE", path)
 	cfg, _, err = LoadConfig()
 	if err != nil {
 		t.Fatalf("mock=true must pass: %v", err)
@@ -32,6 +79,28 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	}
 	if !cfg.Mock {
 		t.Error("mock not read")
+	}
+}
+
+// A local config.json next to the exe must keep working exactly as before:
+// CONFIG_FILE is an addition, not a replacement.
+func TestLoadConfigFallsBackToWorkingFolder(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"mock": true, "petugas_id": "7"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONFIG_FILE", "")
+	t.Chdir(dir)
+
+	cfg, path, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Mock || cfg.PetugasID != "7" {
+		t.Errorf("local config.json not read: %+v", cfg)
+	}
+	if filepath.Base(path) != "config.json" {
+		t.Errorf("path %q, want the working-folder config.json", path)
 	}
 }
 

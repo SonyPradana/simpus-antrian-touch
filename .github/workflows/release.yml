@@ -18,8 +18,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # The version lives in mygo.json, which names the installer. A tag that
-      # disagrees with it would publish files labelled with the wrong version.
+      # The version lives in mygo.json, which names the installer and the zip.
+      # A tag that disagrees with it would publish files labelled with the
+      # wrong version.
       - name: Tag matches mygo.json
         shell: pwsh
         run: |
@@ -35,22 +36,43 @@ jobs:
       - name: mygo build
         run: go tool mygo build
 
+      # The portable exe cannot run without a config.json beside it, so it is
+      # never published on its own. The zip is the thing operators unpack.
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
+          $out = 'build/windows-amd64'
+          $stage = 'build/portable'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+
+          Copy-Item "$out/simpus-antrian-interactive.exe" $stage
+          Copy-Item config.example.json $stage
+          Copy-Item README.md $stage
+          Copy-Item LICENSE $stage
+
+          $zip = "build/simpus-antrian-interactive-$version-windows-amd64.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+
+          # Checksums so a download can be verified before it lands on a kiosk.
+          $files = @($zip, "$out/simpus-antrian-interactive-setup-$version-amd64.exe")
+          $lines = foreach ($f in $files) {
+            if (-not (Test-Path $f)) { Write-Error "missing build output: $f"; exit 1 }
+            $hash = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            "$hash  $(Split-Path $f -Leaf)"
+          }
+          $lines | Set-Content build/SHA256SUMS.txt -Encoding ascii
+          Get-Content build/SHA256SUMS.txt
+
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content mygo.json -Raw | ConvertFrom-Json).version
-          $assets = @(
-            'build/windows-amd64/simpus-antrian-interactive.exe',
-            "build/windows-amd64/simpus-antrian-interactive-setup-$version-amd64.exe"
-          )
-          foreach ($a in $assets) {
-            if (-not (Test-Path $a)) {
-              Write-Error "missing build output: $a"
-              exit 1
-            }
-          }
           # gh ships with the runner; no third-party release action needed.
-          gh release create $env:GITHUB_REF_NAME @assets `
+          gh release create $env:GITHUB_REF_NAME `
+            "build/simpus-antrian-interactive-$version-windows-amd64.zip" `
+            "build/windows-amd64/simpus-antrian-interactive-setup-$version-amd64.exe" `
+            build/SHA256SUMS.txt `
             --title $env:GITHUB_REF_NAME --generate-notes

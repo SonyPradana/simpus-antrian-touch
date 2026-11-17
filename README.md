@@ -26,8 +26,15 @@ go tool mygo build     # release to build/
 
 ## Configuration
 
-`config.json` is read from next to the executable; `CONFIG_FILE` can override
-it, and `go run`/`mygo dev` fall back to the working folder.
+`config.json` is looked up in this order:
+
+1. `CONFIG_FILE`, if the environment variable is set. The file **must** exist;
+   a wrong path is reported with the path spelled out.
+2. Next to the executable — the normal case for a portable copy.
+3. The working folder, so `go run` and `go tool mygo dev` also work.
+
+Nothing about the first option changes the other two: a local `config.json`
+beside the exe keeps working exactly as before.
 
 ```powershell
 Copy-Item config.example.json config.json
@@ -58,7 +65,43 @@ There is no `.gitignore` in this repo — do not `git add` those files, and do
 not add `config.json` to the repo.
 
 When `mock: false`, `api_key` and `poscheck_id` must be filled in; the app
-refuses to start with a message naming which field is empty.
+refuses to start with a message naming which field is empty. If the file was
+not found at all, the message also says which path it looked in.
+
+Logs go to `log/` **next to the executable**, never to the working directory,
+so a shortcut or a scheduled task cannot scatter them somewhere else.
+
+### Keeping config outside the app folder
+
+Useful on more than one kiosk, and when the app folder must be replaceable
+without losing the key. Once, as Administrator:
+
+```powershell
+New-Item -ItemType Directory -Force 'C:\ProgramData\simpus-antrian'
+Copy-Item 'C:\simpus-antrian\config.example.json' 'C:\ProgramData\simpus-antrian\config.json'
+notepad 'C:\ProgramData\simpus-antrian\config.json'
+
+icacls 'C:\ProgramData\simpus-antrian' /inheritance:r `
+  /grant:r 'BUILTIN\Administrators:(OI)(CI)F' 'BUILTIN\Users:(OI)(CI)RX'
+
+[Environment]::SetEnvironmentVariable(
+  'CONFIG_FILE', 'C:\ProgramData\simpus-antrian\config.json', 'Machine')
+```
+
+The variable only reaches **new** processes: log off and on, or reboot, before
+trusting it. Open a fresh terminal and check `$env:CONFIG_FILE` before copying
+a shortcut into Startup.
+
+Without Administrator rights, the same thing per user:
+
+```powershell
+$dir = "$env:LOCALAPPDATA\simpus-antrian"
+New-Item -ItemType Directory -Force $dir
+Copy-Item 'C:\simpus-antrian\config.example.json' "$dir\config.json"
+[Environment]::SetEnvironmentVariable('CONFIG_FILE', "$dir\config.json", 'User')
+```
+
+That kiosk must then run as the same Windows user that set the variable.
 
 ## Screen flow
 
@@ -205,7 +248,7 @@ polyclinics one at a time.
 
 `go tool mygo build` produces `build/windows-amd64/simpus-antrian-interactive.exe`.
 Copy `config.json` next to the exe — the kiosk reads it from the exe folder
-first.
+first, or point `CONFIG_FILE` at it.
 
 ```powershell
 cd touch
@@ -213,6 +256,9 @@ go tool mygo build
 Copy-Item config.json build\windows-amd64\config.json
 .\build\windows-amd64\simpus-antrian-interactive.exe
 ```
+
+`--out` can send the build somewhere else, and `CONFIG_FILE` can point at the
+config instead of copying it.
 
 `dry_run` **must** be `true` during testing. That way the queue number is
 computed by the server from real data, but no row is written to the database and
@@ -229,15 +275,31 @@ windows through purego; there is no portable build. The four `TestLive*` tests
 skip themselves without `APM_LIVE=1`, so CI needs no API key.
 
 `.github/workflows/release.yml` runs when a `v*` tag is pushed. It refuses to
-publish if the tag does not match `version` in `mygo.json`, then attaches the
-portable exe and the installer to the GitHub release:
+publish if the tag does not match `version` in `mygo.json`, then attaches:
+
+| Asset | Contents |
+|---|---|
+| `simpus-antrian-interactive-<version>-windows-amd64.zip` | exe, `config.example.json`, `README.md`, `LICENSE` |
+| `simpus-antrian-interactive-setup-<version>-amd64.exe` | installer |
+| `SHA256SUMS.txt` | checksums for both |
+
+The zip is the recommended download. It is the only asset that runs on its
+own: unpack it, copy `config.example.json` to `config.json`, fill in the key,
+and start the exe. A bare exe is never published, because without a
+`config.json` beside it the kiosk refuses to start.
+
+Verify a download before copying it to a kiosk:
+
+```powershell
+Get-FileHash .\simpus-antrian-interactive-0.1.0-windows-amd64.zip -Algorithm SHA256
+```
 
 ```powershell
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Bump `version` in `mygo.json` before tagging; the installer file name comes
+Bump `version` in `mygo.json` before tagging; the zip and installer names come
 from that field.
 
 ## License

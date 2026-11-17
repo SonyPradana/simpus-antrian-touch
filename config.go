@@ -41,8 +41,20 @@ const (
 // LoadConfig reads config.json. Search order: CONFIG_FILE, exe folder,
 // then the working folder (so `go run` and `go tool mygo dev` also work).
 func LoadConfig() (*Config, string, error) {
-	path := configPath()
+	path, err := configPath()
+	if err != nil {
+		return nil, path, err
+	}
+	if env := strings.TrimSpace(os.Getenv("CONFIG_FILE")); env != "" && path == env {
+		// An explicit CONFIG_FILE that does not exist must say so. Falling
+		// through to the defaults would report "api_key is empty", which
+		// sends staff looking at the file instead of at the path.
+		if _, err := os.Stat(env); err != nil {
+			return nil, env, fmt.Errorf("CONFIG_FILE tidak ditemukan: %s: %w", env, err)
+		}
+	}
 	cfg := &Config{}
+	var notFound string
 	data, err := os.ReadFile(path)
 	switch {
 	case err == nil:
@@ -56,30 +68,49 @@ func LoadConfig() (*Config, string, error) {
 		}
 	case errors.Is(err, os.ErrNotExist):
 		// New kiosk: use defaults, do not fail just because the file is absent.
+		// Validation below still refuses mock=false with no key, and says
+		// where it looked so the file is easy to put in the right place.
+		notFound = path
 	default:
 		return nil, path, err
 	}
 	cfg.normalize()
 	if err := cfg.validate(); err != nil {
+		if notFound != "" {
+			return nil, path, fmt.Errorf("%w (config.json tidak ditemukan di %s; salin config.example.json ke sana)", err, notFound)
+		}
 		return nil, path, err
 	}
 	return cfg, path, nil
 }
 
-func configPath() string {
+func configPath() (string, error) {
 	if p := strings.TrimSpace(os.Getenv("CONFIG_FILE")); p != "" {
-		return p
+		return p, nil
 	}
 	if exe, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exe), configFileName)
 		if _, err := os.Stat(p); err == nil {
-			return p
+			return p, nil
 		}
 	}
 	if wd, err := os.Getwd(); err == nil {
-		return filepath.Join(wd, configFileName)
+		return filepath.Join(wd, configFileName), nil
 	}
-	return configFileName
+	return configFileName, nil
+}
+
+// exeDir is the folder the running executable lives in. Feeding log files
+// through the current directory instead would drop them into wherever the
+// shortcut or Task Scheduler happened to start us.
+func exeDir() string {
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Dir(exe)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		return wd
+	}
+	return "."
 }
 
 func (c *Config) normalize() {
