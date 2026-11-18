@@ -309,6 +309,14 @@ func TestConfigExampleShipsSafeDefaults(t *testing.T) {
 	if cfg.APIKey != "" || cfg.PoscheckID != "" {
 		t.Error("config.example.json must not contain a real api_key/poscheck_id")
 	}
+	// A copy of the example must not install itself on the machine it is
+	// unpacked on; autostart is a deliberate production step.
+	if cfg.Autostart {
+		t.Error("config.example.json must ship autostart=false")
+	}
+	if cfg.Printer.Name != "" {
+		t.Error("config.example.json must ship printing off (empty printer.name)")
+	}
 }
 
 // dry_run is passed through as-is: a kiosk tested against the real server

@@ -52,6 +52,7 @@ Copy-Item config.example.json config.json
 | `printer.name` | exact Windows printer name. Empty = printing off, which is the default |
 | `printer.width` | characters per line: `32` for 58 mm paper, `48` for 80 mm. Default 32 |
 | `printer.copies` | copies of each ticket. Default 1 |
+| `autostart` | `true` = the kiosk adds itself to the Windows Run key so it opens after a reboot. Default `false` |
 
 `config.example.json` ships with `dry_run: true`. This is deliberate: copying
 the example, filling in `api_key` and `poscheck_id`, and starting the kiosk
@@ -153,6 +154,56 @@ succeeds and nothing is printed.
 
 ```json
 "printer": { "name": "Send To OneNote 16" }
+```
+
+## Autostart after a power cut
+
+A kiosk that needs somebody to click an icon after an outage is not a kiosk.
+Set `"autostart": true` and the app puts its own path in the Windows Run key
+(`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value
+`SimpusAntrianKiosk`). No Administrator rights, no service, no installer.
+
+The entry is **reconciled on every start**, not written once:
+
+| `autostart` | What the next start does |
+|---|---|
+| `true` | writes or repairs the entry so it points at the exe running now |
+| `false` or missing | removes the entry |
+
+That is what makes moving the app folder safe: unpack a new zip somewhere else,
+start it once, and the old path is replaced. Turning autostart off is the same
+one-line change.
+
+Two guards:
+
+- A binary running from the temp folder is **never** registered. `go run` and
+  `go tool mygo dev` build into temp, and Windows would then try to start a file
+  that no longer exists. The skip is written to `log/`.
+- A registry that refuses to be written never stops the kiosk. It is an `ERROR`
+  line in `log/`, and the kiosk opens as usual.
+
+### Autostart is not auto-login
+
+This is the part that surprises people. If the PC stops at the Windows login
+screen after an outage, **nothing starts**, autostart or not: Windows runs the
+Run key only after somebody logs in.
+
+To bring the kiosk back with nobody present, the PC must log in by itself:
+
+```powershell
+netplwiz
+```
+
+Clear "Users must enter a user name and password", then enter the kiosk
+account's password once. That stores the password in the machine's credential
+store, so treat it as a physical-security decision for the site: anyone who
+reaches the PC gets that session. If that is not acceptable, keep the kiosk
+behind a locked door and accept that a power cut needs a person.
+
+Check the entry without opening the app:
+
+```powershell
+Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name SimpusAntrianKiosk
 ```
 
 ## Screen flow

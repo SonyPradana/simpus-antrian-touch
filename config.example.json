@@ -6,6 +6,7 @@
   "mock": true,
   "dry_run": true,
   "windowed": false,
+  "autostart": false,
   "printer": {
     "name": "",
     "width": 32,

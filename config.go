@@ -35,6 +35,11 @@ type Config struct {
 	// printer: the number still shows on screen, nothing is printed, and no
 	// error is reported.
 	Printer PrinterConfig `json:"printer"`
+	// Autostart puts the kiosk in the Windows Run key, so it opens by itself
+	// after a reboot or a power cut. Default false: a development copy must
+	// not install itself on the machine. See autostart.go for why this is not
+	// the same as auto-login.
+	Autostart bool `json:"autostart"`
 }
 
 // PrinterConfig points at one ESC/POS printer. Printing is best effort: the

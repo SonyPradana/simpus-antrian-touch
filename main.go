@@ -584,6 +584,9 @@ func main() {
 		api = newMockAPI()
 		lg.Event("mode mock: data karangan, tidak menyentuh server")
 	}
+	// The Run entry is reconciled on every start, so moving the app folder or
+	// unpacking a new zip repairs itself without a second step for staff.
+	syncAutostart(cfg, winRegistry{}, exePath(), lg)
 	a := newApp(cfg, lg, api)
 	// Printing is off unless config.json names a printer. With it on, a dead
 	// printer is a log line, not a failed registration.
