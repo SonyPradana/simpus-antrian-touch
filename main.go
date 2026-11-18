@@ -91,6 +91,14 @@ type app struct {
 	// setFullscreen applies the display mode to the MyGo window. Filled in by
 	// main() with the real window; nil in tests, where nothing can be moved.
 	setFullscreen func(bool)
+	// prn prints the ticket after a number is issued. Nil when printing is
+	// off, in tests, or when no printer was configured. Printing is best
+	// effort, so a nil printer is a no-op rather than an error.
+	prn printer
+	// printNote is the last printer test result. Printing is silent and never
+	// blocks the kiosk, so this is the only place staff can find out that a
+	// printer is unplugged or out of paper.
+	printNote string
 	// quit closes the app. Filled in by main() with the MyGo Window/App; nil
 	// in tests, where closing the app means nothing.
 	quit func()
@@ -152,6 +160,7 @@ func (a *app) staffDialog(c *ui.Context) {
 			// kiosk, and a destructive button should not be the one nearest the
 			// thumb.
 			a.windowModeRow(c)
+			a.printerRow(c)
 			ui.Divider(c)
 
 			ui.Text(c, "Kiosk tidak bisa dipakai pasien sampai aplikasi dijalankan lagi.").
@@ -207,6 +216,47 @@ func (a *app) setFullscreenMode(fullscreen bool) {
 		a.setFullscreen(fullscreen)
 	}
 	a.log.Event("tampilan: layar penuh=%t", fullscreen)
+}
+
+// printerRow shows which printer is configured and prints a sample ticket on
+// demand. Printing is deliberately silent, so a printer that has been
+// unplugged would otherwise go unnoticed until a patient complains.
+func (a *app) printerRow(c *ui.Context) {
+	if a.prn == nil {
+		ui.Text(c, "Printer: mati, nomor hanya tampil di layar").
+			FontSize(18).TextColor(c.Theme().TextMuted)
+		return
+	}
+	ui.Row(c).Gap(16).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "Printer: "+a.prn.String()).
+			FontSize(18).TextColor(c.Theme().TextMuted).Grow(1)
+		if ui.Button(c.Key("staff-print-test"), "Tes cetak").FontSize(18).Height(56).Clicked() {
+			a.testPrint()
+		}
+	})
+	if a.printNote != "" {
+		ui.Text(c, a.printNote).FontSize(16).TextColor(c.Theme().TextMuted)
+	}
+}
+
+// testPrint sends a sample ticket. The result is shown in the dialog and
+// logged, never as a modal: staff testing a printer should not have to dismiss
+// anything to get back to the queue.
+func (a *app) testPrint() {
+	job := encodeReceipt(sampleReceipt(a.now), a.cfg.Printer.printerWidth())
+	a.printNote = "Mengirim ke " + a.prn.String() + "..."
+	a.async(func() func() {
+		err := a.prn.Print(job, 1)
+		return func() {
+			if err != nil {
+				a.printNote = "Gagal: " + err.Error()
+				a.log.Error("tes cetak gagal: %v", err)
+				return
+			}
+			a.printNote = "Terkirim ke " + a.prn.String()
+			a.log.Event("tes cetak terkirim ke %s", a.prn)
+		}
+	})
 }
 
 // tick maintains the 120-second timer. Every frame still far from the limit
@@ -435,6 +485,40 @@ func (a *app) queueBody() QueueBody {
 	return body
 }
 
+// showTicket is the single place a successful queue lands on screen. Both the
+// normal path and ALREADY_REGISTERED come through here, so the ticket is
+// printed exactly once per number.
+func (a *app) showTicket(res *QueueResult) {
+	a.result = res
+	a.screen = screenTicket
+	a.printTicket(res)
+}
+
+// printTicket sends the receipt to the printer. Best effort: the number is
+// already on screen and in SIMPUS, so a dead printer must not stop the kiosk
+// or alarm the patient. Failures are logged for staff and nothing else.
+func (a *app) printTicket(res *QueueResult) {
+	if a.prn == nil || res == nil {
+		return
+	}
+	r := receiptFrom(res, a.now)
+	job := encodeReceipt(r, a.cfg.Printer.printerWidth())
+	copies := a.cfg.Printer.printerCopies()
+
+	// Printing runs off the UI thread: a slow or unreachable printer must not
+	// freeze the kiosk on the ticket screen.
+	a.async(func() func() {
+		err := a.prn.Print(job, copies)
+		return func() {
+			if err != nil {
+				a.log.Error("cetak tiket kode=%s gagal: %v", r.Code, err)
+				return
+			}
+			a.log.Event("cetak tiket kode=%s copies=%d", r.Code, copies)
+		}
+	})
+}
+
 // submit takes a queue number. QUEUE_BUSY is retried at 1s/2s per the
 // contract; other errors are shown immediately.
 func (a *app) submit() {
@@ -471,8 +555,7 @@ func (a *app) submit() {
 					var existing QueueResult
 					if json.Unmarshal(apiErr.Data, &existing) == nil {
 						existing.SudahTerdaftar = true
-						a.result = &existing
-						a.screen = screenTicket
+						a.showTicket(&existing)
 						a.log.Event("queue sudah terdaftar kode=%s", existing.Queue.Kode)
 						return
 					}
@@ -480,8 +563,7 @@ func (a *app) submit() {
 				a.fail("queue", err)
 				return
 			}
-			a.result = res
-			a.screen = screenTicket
+			a.showTicket(res)
 			a.log.Event("queue kode=%s poli=%s dokter=%s mode=%s",
 				res.Queue.Kode, res.Poli.Nama, res.Dokter.NamaDokter, res.Mode)
 		}
@@ -503,6 +585,14 @@ func main() {
 		lg.Event("mode mock: data karangan, tidak menyentuh server")
 	}
 	a := newApp(cfg, lg, api)
+	// Printing is off unless config.json names a printer. With it on, a dead
+	// printer is a log line, not a failed registration.
+	a.prn = printerFromConfig(cfg)
+	if a.prn != nil {
+		lg.Event("printer aktif: %s", a.prn)
+	} else {
+		lg.Event("printer mati: nomor hanya tampil di layar")
+	}
 
 	mygo.App.WhenReady(func() {
 		win := mygo.NewWindow(kioskOptions(cfg, a.view))

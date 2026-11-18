@@ -49,6 +49,9 @@ Copy-Item config.example.json config.json
 | `mock` | `true` uses invented data in memory, without a server |
 | `dry_run` | `true` = the server computes the number without writing to the database. The example file ships with `true` so a fresh install never writes; set it to `false` once the kiosk is ready to issue real queue numbers |
 | `windowed` | `true` = a normal window that can be closed. Development only |
+| `printer.name` | exact Windows printer name. Empty = printing off, which is the default |
+| `printer.width` | characters per line: `32` for 58 mm paper, `48` for 80 mm. Default 32 |
+| `printer.copies` | copies of each ticket. Default 1 |
 
 `config.example.json` ships with `dry_run: true`. This is deliberate: copying
 the example, filling in `api_key` and `poscheck_id`, and starting the kiosk
@@ -102,6 +105,55 @@ Copy-Item 'C:\simpus-antrian\config.example.json' "$dir\config.json"
 ```
 
 That kiosk must then run as the same Windows user that set the variable.
+
+## Receipt printer
+
+Printing is off until `printer.name` names a printer; an empty name is how it is
+switched off, so there is no separate switch to fall out of step. When it is
+set, every issued number prints one ESC/POS ticket through the Windows spooler:
+no extra dependency, and the printer's own driver does the work.
+
+Install the printer in Windows first, the way the vendor instructs, then copy
+its name exactly — a typo is the most common failure:
+
+```powershell
+Get-Printer | Select-Object Name, DriverName
+```
+
+```json
+"printer": { "name": "EPSON TM-T82 Receipt", "width": 32, "copies": 1 }
+```
+
+| Paper | `width` |
+|---|---|
+| 58 mm | 32 |
+| 80 mm | 48 |
+
+`copies: 2` prints the same ticket twice, for the patient and the file. The
+ticket ends with a cut command, so the printer needs a cutter or staff tear the
+paper.
+
+Printing is **best effort**. The number is already on screen and in SIMPUS, so
+a printer that is off, unplugged, or out of paper never blocks the patient and
+never shows a message: the failure only goes to `log/` and the kiosk keeps
+issuing numbers. That silence is why the Petugas menu has **Tes cetak**: it
+sends a sample ticket and reports the result in the dialog, which is the only
+place a broken printer becomes visible before a patient finds it.
+
+The ticket is plain ASCII on purpose. Thermal printers boot into a single-byte
+code page, not UTF-8, so anything outside ASCII prints as `?` rather than
+arriving as garbage and shifting every column after it.
+
+`dry_run: true` tickets print too, marked **MODE UJI**, so the printer can be
+checked against the real server without creating a visit.
+
+No printer on the dev PC? Any installed printer proves the plumbing, and
+**Send To OneNote 16** is handy when it exists: its port is `nul:`, so the job
+succeeds and nothing is printed.
+
+```json
+"printer": { "name": "Send To OneNote 16" }
+```
 
 ## Screen flow
 

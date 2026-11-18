@@ -5,5 +5,10 @@
   "petugas_id": "",
   "mock": true,
   "dry_run": true,
-  "windowed": false
+  "windowed": false,
+  "printer": {
+    "name": "",
+    "width": 32,
+    "copies": 1
+  }
 }

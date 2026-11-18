@@ -31,6 +31,44 @@ type Config struct {
 	// but no row is written to the database. Used when testing the kiosk
 	// against the production server. Default false = take a real number.
 	DryRun bool `json:"dry_run"`
+	// Printer configures the receipt printer. Empty (the default) means no
+	// printer: the number still shows on screen, nothing is printed, and no
+	// error is reported.
+	Printer PrinterConfig `json:"printer"`
+}
+
+// PrinterConfig points at one ESC/POS printer. Printing is best effort: the
+// kiosk never fails or blocks because a printer is unreachable.
+type PrinterConfig struct {
+	// Name is the printer's name in Windows, character for character. Empty
+	// means printing is off, which is the default: no paper, no log noise.
+	// `Get-Printer | Select-Object Name` lists the candidates.
+	Name string `json:"name"`
+	// Width is the receipt width in characters. 32 for 58 mm, 48 for 80 mm.
+	Width int `json:"width"`
+	// Copies is how many times the receipt is printed. Default 1.
+	Copies int `json:"copies"`
+}
+
+// printerWidth normalises the receipt width. An unset or absurd value falls
+// back to 32 characters (58 mm paper), the most common ticket size.
+func (p *PrinterConfig) printerWidth() int {
+	switch {
+	case p.Width == 0:
+		return 32
+	case p.Width < 20 || p.Width > 96:
+		return 32
+	default:
+		return p.Width
+	}
+}
+
+// printerCopies normalises the copy count. Zero or less means one copy.
+func (p *PrinterConfig) printerCopies() int {
+	if p.Copies < 1 {
+		return 1
+	}
+	return p.Copies
 }
 
 const (
@@ -121,6 +159,9 @@ func (c *Config) normalize() {
 	c.APIKey = strings.TrimSpace(c.APIKey)
 	c.PoscheckID = strings.TrimSpace(c.PoscheckID)
 	c.PetugasID = strings.TrimSpace(c.PetugasID)
+	// A trailing space in the printer name is invisible in a text editor but
+	// makes OpenPrinter fail, so it is dropped here.
+	c.Printer.Name = strings.TrimSpace(c.Printer.Name)
 }
 
 func (c *Config) validate() error {
